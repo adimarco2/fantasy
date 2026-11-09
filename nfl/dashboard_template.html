@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modelos QB vs ADP</title>
+<style>
+:root{
+  color-scheme:light;
+  --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#eb6834; --pos:#2a78d6; --neg:#e34948; --mid:#f0efec;
+  --q1:#cde2fb; --q2:#9ec5f4; --q3:#6da7ec; --q4:#3987e5; --q5:#256abf; --q6:#184f95;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --pos:#3987e5; --neg:#e66767; --mid:#383835;
+    --q1:#0d366b; --q2:#104281; --q3:#184f95; --q4:#1c5cab; --q5:#256abf; --q6:#3987e5;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --page:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --ring:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926; --pos:#3987e5; --neg:#e66767; --mid:#383835;
+  --q1:#0d366b; --q2:#104281; --q3:#184f95; --q4:#1c5cab; --q5:#256abf; --q6:#3987e5;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1180px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:24px;margin:0 0 4px}
+h2{font-size:16px;margin:0 0 2px}
+.sub{color:var(--ink2);margin:0 0 14px;font-size:13px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(12,1fr)}
+.card{background:var(--surface);border:1px solid var(--ring);border-radius:12px;padding:16px;min-width:0}
+.c12{grid-column:span 12}.c6{grid-column:span 6}.c3{grid-column:span 3}
+@media (max-width:860px){.c6,.c3{grid-column:span 12}}
+@media (min-width:561px) and (max-width:860px){.c3{grid-column:span 6}}
+.kpi .lbl{color:var(--ink2);font-size:12px}
+.kpi .val{font-size:28px;font-weight:600;margin:2px 0}
+.kpi .det{color:var(--muted);font-size:12px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink2);margin:6px 0}
+.sw{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.sq{border-radius:2px}
+svg{display:block;width:100%;overflow:visible}
+svg text{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+svg .lab{fill:var(--ink2);font-size:12px}
+svg .lab.b{fill:var(--ink);font-weight:600}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+select,input{font:inherit;color:var(--ink);background:var(--page);border:1px solid var(--axis);border-radius:8px;padding:5px 8px}
+input{min-width:0;width:220px;max-width:100%}
+.tw{overflow-x:auto;margin-top:8px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:13px}
+th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--grid);white-space:nowrap}
+th{color:var(--ink2);font-weight:600;position:sticky;top:0;background:var(--surface)}
+th:first-child,td:first-child,.l{text-align:left}
+th.s{cursor:pointer;user-select:none}
+th.s:hover{color:var(--ink)}
+tr.best td{font-weight:600}
+.heat td.v{color:var(--ink)}
+.heat td.dk{color:#fff}
+.note{color:var(--muted);font-size:12px;margin-top:8px}
+#tip{position:fixed;pointer-events:none;background:var(--surface);color:var(--ink);border:1px solid var(--ring);
+  box-shadow:0 4px 16px rgba(0,0,0,.12);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.5;
+  opacity:0;transition:opacity .08s;z-index:9;max-width:260px}
+#tip b{font-weight:600}
+.tabs{display:flex;gap:4px;margin:8px 0}
+.tabs button{font:inherit;font-size:12px;border:1px solid var(--axis);background:transparent;color:var(--ink2);border-radius:999px;padding:3px 10px;cursor:pointer}
+.tabs button[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p class="sub" id="subtitle"></p>
+
+  <div class="grid" id="kpis"></div>
+
+  <div class="grid" style="margin-top:16px">
+    <section class="card c6">
+      <h2>Error medio por modelo (MAE, PPG)</h2>
+      <p class="sub">Más a la izquierda es mejor. Backtest vs. temporada en curso.</p>
+      <div class="legend" id="lg-mae"></div>
+      <div id="ch-mae"></div>
+    </section>
+    <section class="card c6">
+      <h2>Proyección vs. PPG real</h2>
+      <p class="sub" id="sc-sub"></p>
+      <div class="controls"><label for="sc-model">Modelo</label><select id="sc-model"></select></div>
+      <div id="ch-sc"></div>
+      <p class="note">Sobre la diagonal: rindió más de lo proyectado. Etiquetados: los 5 errores más grandes.</p>
+    </section>
+
+    <section class="card c12">
+      <h2>Todas las métricas</h2>
+      <div class="tabs" id="mt-tabs"></div>
+      <div class="tw"><table id="mt"></table></div>
+      <p class="note" id="mt-note"></p>
+    </section>
+
+    <section class="card c6">
+      <h2>MAE por temporada</h2>
+      <p class="sub">Color más oscuro = más error. Revela si un modelo gana solo por un año.</p>
+      <div class="tw"><table class="heat" id="heat"></table></div>
+    </section>
+    <section class="card c6">
+      <h2>Dónde el modelo difiere del ADP</h2>
+      <p class="sub" id="dv-sub"></p>
+      <div class="legend"><span><i class="sw sq" style="background:var(--pos)"></i>Modelo lo pone más arriba que el ADP</span><span><i class="sw sq" style="background:var(--neg)"></i>Más abajo</span></div>
+      <div id="ch-dv"></div>
+    </section>
+
+    <section class="card c12">
+      <h2>Draft board</h2>
+      <div class="controls"><input id="q" type="search" placeholder="Buscar jugador o equipo" aria-label="Buscar"></div>
+      <div class="tw" style="max-height:560px"><table id="board"></table></div>
+      <p class="note">Clic en el encabezado para ordenar. «Error» = proyección − PPG real (positivo: se proyectó de más).</p>
+    </section>
+  </div>
+</main>
+<div id="tip" role="tooltip"></div>
+<script>
+const D = __DATA__;
+const N = m => D.nombres[m] || m;
+const f2 = v => v == null || isNaN(v) ? '–' : (+v).toFixed(2);
+const pct = v => v == null ? '–' : Math.round(v * 100) + '%';
+const $ = s => document.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+const el = (t, a = {}, p) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+const lin = (d0, d1, r0, r1) => v => r0 + (v - d0) / (d1 - d0) * (r1 - r0);
+function ticks(a, b, n = 5) {
+  const raw = (b - a) / n, p = 10 ** Math.floor(Math.log10(raw));
+  const s = [1, 2, 2.5, 5, 10].find(m => m * p >= raw) * p, out = [];
+  for (let v = Math.ceil(a / s) * s; v <= b + 1e-9; v += s) out.push(+v.toFixed(6));
+  return out;
+}
+const tip = $('#tip');
+function showTip(e, html) {
+  tip.innerHTML = html; tip.style.opacity = 1;
+  const r = tip.getBoundingClientRect(); let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+}
+const hideTip = () => tip.style.opacity = 0;
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+const real = D.pred.filter(r => r.Real_rk != null && r.PPG_real != null);
+const cmpBy = Object.fromEntries(D.comparacion.map(r => [r.Modelo, r]));
+const btBy = Object.fromEntries(D.backtest.map(r => [r.Modelo, r]));
+const seasons = D.bt_seasons.length ? `${D.bt_seasons[0]}–${D.bt_seasons.at(-1)}` : 'backtest';
+
+// ---------- Encabezado y KPIs ----------
+$('#title').textContent = `QB ${D.test}: modelos vs. ADP`;
+$('#subtitle').textContent = `Predicción de puntos fantasy por partido (PPG) con información previa a la semana 1. Backtest ${seasons} (${D.n_bt} temporadas de QB). `
+  + (real.length ? `${D.test}: ${D.semana ? 'hasta la semana ' + D.semana + ', ' : ''}${real.length} QBs con al menos ${D.minG} juegos.` : `${D.test}: aún sin juegos.`);
+const kp = [];
+const bb = btBy[D.best], bc = cmpBy[D.best], ac = cmpBy.SoloADP;
+kp.push(['Modelo elegido por backtest', N(D.best), `MAE backtest ${f2(bb.MAE)}`]);
+if (bc && ac) {
+  const d = bc.MAE - ac.MAE;
+  kp.push([`MAE ${D.test}: elegido vs. Solo ADP`, `${f2(bc.MAE)} vs ${f2(ac.MAE)}`, d > 0 ? `El ADP va ${f2(d)} mejor` : `El modelo va ${f2(-d)} mejor`]);
+  const k = `Acierto_Top${D.top}`;
+  kp.push([`Acierto Top ${D.top} en ${D.test}`, `${pct(bc[k])} vs ${pct(ac[k])}`, `Elegido vs. Solo ADP · al azar ≈ ${pct(D.top / real.length)}`]);
+  const ord = D.comparacion.filter(r => r.Modelo !== 'Ingenuo').sort((a, b) => a.MAE - b.MAE)[0];
+  kp.push([`Mejor MAE en ${D.test}`, N(ord.Modelo), `MAE ${f2(ord.MAE)} · Spearman ${f2(ord.Spearman)}`]);
+} else {
+  kp.push(['Jugadores proyectados', D.pred.length, 'Sin resultados reales todavía']);
+}
+$('#kpis').innerHTML = kp.map(([l, v, d]) => `<div class="card kpi c3"><div class="lbl">${l}</div><div class="val">${v}</div><div class="det">${d}</div></div>`).join('');
+
+// ---------- Dot plot MAE ----------
+function drawMAE() {
+  const box = $('#ch-mae'), W = box.clientWidth, L = 150, R = 16, rowH = 30, T = 8, B = 26;
+  const rows = D.backtest.map(r => ({ m: r.Modelo, bt: r.MAE, te: cmpBy[r.Modelo]?.MAE }));
+  const H = T + rows.length * rowH + B;
+  const vals = rows.flatMap(r => [r.bt, r.te]).filter(v => v != null);
+  const lo = Math.floor((Math.min(...vals) - .1) * 4) / 4, hi = Math.ceil((Math.max(...vals) + .1) * 4) / 4;
+  const x = lin(lo, hi, L, W - R);
+  box.innerHTML = ''; const s = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H }, box);
+  for (const t of ticks(lo, hi, 5)) {
+    el('line', { x1: x(t), x2: x(t), y1: T, y2: H - B, stroke: 'var(--grid)' }, s);
+    el('text', { x: x(t), y: H - 8, 'text-anchor': 'middle' }, s).textContent = t.toFixed(2);
+  }
+  rows.forEach((r, i) => {
+    const y = T + i * rowH + rowH / 2;
+    const t = el('text', { x: L - 10, y: y + 4, 'text-anchor': 'end', class: 'lab' + (r.m === D.best || r.m === 'SoloADP' ? ' b' : '') }, s);
+    t.textContent = N(r.m);
+    if (r.te != null) el('line', { x1: x(r.bt), x2: x(r.te), y1: y, y2: y, stroke: 'var(--axis)', 'stroke-width': 2 }, s);
+    el('circle', { cx: x(r.bt), cy: y, r: 6, fill: 'var(--s1)', stroke: 'var(--surface)', 'stroke-width': 2 }, s);
+    if (r.te != null) el('circle', { cx: x(r.te), cy: y, r: 6, fill: 'var(--s2)', stroke: 'var(--surface)', 'stroke-width': 2 }, s);
+    const hit = el('rect', { x: 0, y: y - rowH / 2, width: W, height: rowH, fill: 'transparent' }, s);
+    hit.addEventListener('mousemove', e => showTip(e, `<b>${N(r.m)}</b><br>Backtest ${seasons}: ${f2(r.bt)}<br>${D.test}: ${f2(r.te)}`));
+    hit.addEventListener('mouseleave', hideTip);
+  });
+}
+$('#lg-mae').innerHTML = `<span><i class="sw" style="background:var(--s1)"></i>Backtest ${seasons}</span>` + (D.comparacion.length ? `<span><i class="sw" style="background:var(--s2)"></i>${D.test}</span>` : '');
+
+// ---------- Scatter ----------
+const sel = $('#sc-model');
+sel.innerHTML = D.modelos.map(m => `<option value="${m}"${m === D.best ? ' selected' : ''}>${N(m)}${m === D.best ? ' (elegido)' : ''}</option>`).join('');
+function drawScatter() {
+  const box = $('#ch-sc'), m = sel.value, W = box.clientWidth, H = Math.min(380, Math.max(260, W * .75)), L = 40, R = 12, T = 10, B = 36;
+  box.innerHTML = '';
+  if (!real.length) { box.innerHTML = '<p class="note">Sin resultados reales todavía.</p>'; $('#sc-sub').textContent = ''; return; }
+  const all = real.flatMap(r => [r[m], r.PPG_real]);
+  const lo = Math.floor(Math.min(...all) / 2) * 2, hi = Math.ceil(Math.max(...all) / 2) * 2;
+  const x = lin(lo, hi, L, W - R), y = lin(lo, hi, H - B, T);
+  const s = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H }, box);
+  for (const t of ticks(lo, hi, 6)) {
+    el('line', { x1: x(t), x2: x(t), y1: T, y2: H - B, stroke: 'var(--grid)' }, s);
+    el('line', { x1: L, x2: W - R, y1: y(t), y2: y(t), stroke: 'var(--grid)' }, s);
+    el('text', { x: x(t), y: H - B + 16, 'text-anchor': 'middle' }, s).textContent = t;
+    el('text', { x: L - 6, y: y(t) + 4, 'text-anchor': 'end' }, s).textContent = t;
+  }
+  el('line', { x1: x(lo), y1: y(lo), x2: x(hi), y2: y(hi), stroke: 'var(--axis)', 'stroke-width': 1.5, 'stroke-dasharray': '4 4' }, s);
+  el('text', { x: (L + W - R) / 2, y: H - 4, 'text-anchor': 'middle' }, s).textContent = `Proyección (${N(m)})`;
+  el('text', { x: 12, y: (T + H - B) / 2, 'text-anchor': 'middle', transform: `rotate(-90 12 ${(T + H - B) / 2})` }, s).textContent = 'PPG real';
+  const err = real.map(r => ({ ...r, e: r[m] - r.PPG_real }));
+  const lab = new Set([...err].sort((a, b) => Math.abs(b.e) - Math.abs(a.e)).slice(0, 5).map(r => r.Player));
+  for (const r of err) {
+    const cx = x(r[m]), cy = y(r.PPG_real);
+    el('circle', { cx, cy, r: 5, fill: 'var(--s1)', stroke: 'var(--surface)', 'stroke-width': 2 }, s);
+    if (lab.has(r.Player)) {
+      const right = cx < W - 110;
+      el('text', { x: cx + (right ? 9 : -9), y: cy + 4, 'text-anchor': right ? 'start' : 'end', class: 'lab' }, s).textContent = r.Player;
+    }
+    const hit = el('circle', { cx, cy, r: 11, fill: 'transparent' }, s);
+    hit.addEventListener('mousemove', e => showTip(e, `<b>${r.Player}</b> · ${r.Team ?? ''}<br>Proyección: ${f2(r[m])}<br>PPG real: ${f2(r.PPG_real)} (${r.G_real} juegos)<br>Error: ${r.e > 0 ? '+' : ''}${f2(r.e)}<br>Rank ADP ${r.ADP_rk ?? '–'} · Rank real ${r.Real_rk ?? '–'}`));
+    hit.addEventListener('mouseleave', hideTip);
+  }
+  const mae = err.reduce((a, r) => a + Math.abs(r.e), 0) / err.length;
+  $('#sc-sub').textContent = `${D.test}, ${real.length} QBs con ≥ ${D.minG} juegos · MAE ${f2(mae)}`;
+}
+sel.addEventListener('change', drawScatter);
+
+// ---------- Tabla de métricas ----------
+const k = `Acierto_Top${D.top}`, kp2 = `PPG_real_Top${D.top}`;
+const COLS = [['MAE', f2], ['RMSE', f2], ['R2', f2], ['Spearman', f2], [k, pct], [kp2, f2], ['N', v => v]];
+const HDR = { MAE: 'MAE', RMSE: 'RMSE', R2: 'R²', Spearman: 'Spearman', [k]: `Acierto Top ${D.top}`, [kp2]: `PPG real Top ${D.top}`, N: 'N' };
+const tabs = [['bt', `Backtest ${seasons}`, D.backtest]];
+if (D.comparacion.length) tabs.push(['te', `${D.test} en curso`, D.comparacion]);
+let tab = tabs.at(-1)[0];
+function drawMetrics() {
+  $('#mt-tabs').innerHTML = tabs.map(([id, l]) => `<button aria-pressed="${id === tab}" data-t="${id}">${l}</button>`).join('');
+  $('#mt-tabs').querySelectorAll('button').forEach(b => b.onclick = () => { tab = b.dataset.t; drawMetrics(); });
+  const rows = tabs.find(t => t[0] === tab)[2];
+  $('#mt').innerHTML = `<thead><tr><th>Modelo</th>${COLS.map(([c]) => `<th>${HDR[c]}</th>`).join('')}</tr></thead><tbody>`
+    + rows.map(r => `<tr class="${r.Modelo === D.best ? 'best' : ''}"><td>${N(r.Modelo)}${r.Modelo === D.best ? ' · elegido' : ''}</td>${COLS.map(([c, f]) => `<td>${f(r[c])}</td>`).join('')}</tr>`).join('') + '</tbody>';
+  $('#mt-note').textContent = `MAE y RMSE: error en PPG (menor es mejor). Spearman: qué tan bien ordena a los QBs (mayor es mejor). Acierto Top ${D.top}: de los ${D.top} que el modelo pone arriba, cuántos terminan en el Top ${D.top} real.`;
+}
+
+// ---------- Heatmap ----------
+function drawHeat() {
+  const H = D.heat; if (!H.length) { $('#heat').innerHTML = ''; return; }
+  const v = H.flatMap(h => D.modelos.map(m => h[m])), lo = Math.min(...v), hi = Math.max(...v);
+  const steps = ['--q1', '--q2', '--q3', '--q4', '--q5', '--q6'];
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light' || document.documentElement.dataset.theme === 'dark';
+  const cell = x => { const i = Math.min(5, Math.floor((x - lo) / (hi - lo + 1e-9) * 6)); const dk = dark ? i <= 3 : i >= 3; return `<td class="v${dk ? ' dk' : ''}" style="background:var(${steps[i]})">${f2(x)}</td>`; };
+  $('#heat').innerHTML = `<thead><tr><th>Modelo</th>${H.map(h => `<th title="${h.n} QBs">${h.season}${h.season === D.test ? '*' : ''}</th>`).join('')}</tr></thead><tbody>`
+    + D.modelos.map(m => `<tr class="${m === D.best ? 'best' : ''}"><td>${N(m)}</td>${H.map(h => cell(h[m])).join('')}</tr>`).join('') + '</tbody>';
+  $('#heat').insertAdjacentHTML('afterend', '');
+}
+
+// ---------- Divergente: valor vs ADP ----------
+function drawDiv() {
+  const box = $('#ch-dv'), W = box.clientWidth, L = 130, R = 30, rowH = 18, T = 4, B = 24;
+  const rows = D.pred.filter(r => r.Valor_vs_ADP != null).sort((a, b) => b.Valor_vs_ADP - a.Valor_vs_ADP);
+  $('#dv-sub').textContent = `Puestos de diferencia: rank ADP − rank del modelo elegido (${N(D.best)}). Hover para ver cómo le fue.`;
+  const H = T + rows.length * rowH + B, m = Math.max(4, ...rows.map(r => Math.abs(r.Valor_vs_ADP)));
+  const x = lin(-m, m, L, W - R);
+  box.innerHTML = ''; const s = el('svg', { viewBox: `0 0 ${W} ${H}`, height: H }, box);
+  for (const t of ticks(-m, m, 6)) {
+    el('line', { x1: x(t), x2: x(t), y1: T, y2: H - B, stroke: t === 0 ? 'var(--axis)' : 'var(--grid)' }, s);
+    el('text', { x: x(t), y: H - 8, 'text-anchor': 'middle' }, s).textContent = t > 0 ? '+' + t : t;
+  }
+  rows.forEach((r, i) => {
+    const y = T + i * rowH, v = r.Valor_vs_ADP, x0 = x(0), x1 = x(v), w = Math.abs(x1 - x0);
+    el('text', { x: L - 8, y: y + rowH / 2 + 4, 'text-anchor': 'end', class: 'lab' }, s).textContent = r.Player;
+    if (w > 0) {
+      const rr = Math.min(4, w), h = rowH - 4, top = y + 2, px = v > 0 ? x0 : x1;
+      const d = v > 0
+        ? `M${px},${top}h${w - rr}a${rr},${rr} 0 0 1 ${rr},${rr}v${h - 2 * rr}a${rr},${rr} 0 0 1 -${rr},${rr}h-${w - rr}z`
+        : `M${px + w},${top}h-${w - rr}a${rr},${rr} 0 0 0 -${rr},${rr}v${h - 2 * rr}a${rr},${rr} 0 0 0 ${rr},${rr}h${w - rr}z`;
+      el('path', { d, fill: v > 0 ? 'var(--pos)' : 'var(--neg)' }, s);
+    }
+    const hit = el('rect', { x: 0, y, width: W, height: rowH, fill: 'transparent' }, s);
+    const ok = r.Real_rk == null ? '' : `<br>Rank real: ${r.Real_rk} · PPG real ${f2(r.PPG_real)} (${r.G_real} j)`;
+    hit.addEventListener('mousemove', e => showTip(e, `<b>${r.Player}</b> · ${r.Team ?? ''}<br>Rank ADP: ${r.ADP_rk} · Rank modelo: ${r.Proy_rk}<br>Diferencia: ${v > 0 ? '+' : ''}${v}<br>Proyección: ${f2(r.Proy)}${ok}`));
+    hit.addEventListener('mouseleave', hideTip);
+  });
+}
+
+// ---------- Draft board ----------
+const BC = [['Proy_rk', '#', v => v], ['Player', 'Jugador', v => v], ['Team', 'Equipo', v => v ?? ''], ['ADP', 'ADP (pick)', v => v == null ? '–' : (+v).toFixed(1)],
+  ['ADP_rk', 'Rank ADP', v => v ?? '–'], ['Valor_vs_ADP', 'Dif. vs ADP', v => v == null ? '–' : (v > 0 ? '+' : '') + v], ['Proy', 'Proyección', f2],
+  ['SoloADP', 'Solo ADP', f2], ['PPG_real', 'PPG real', f2], ['G_real', 'Juegos', v => v ?? '–'], ['Real_rk', 'Rank real', v => v == null ? '–' : Math.round(v)], ['Err', 'Error', v => v == null ? '–' : (v > 0 ? '+' : '') + f2(v)]];
+const board = D.pred.map(r => ({ ...r, Err: r.Real_rk != null ? r.Proy - r.PPG_real : null }));
+let sortK = 'Proy_rk', asc = true;
+function drawBoard() {
+  const q = $('#q').value.trim().toLowerCase();
+  const rows = board.filter(r => !q || (r.Player + ' ' + (r.Team ?? '')).toLowerCase().includes(q))
+    .sort((a, b) => { const x = a[sortK], y = b[sortK]; if (x == null) return 1; if (y == null) return -1; return (x > y ? 1 : x < y ? -1 : 0) * (asc ? 1 : -1); });
+  $('#board').innerHTML = `<thead><tr>${BC.map(([c, l]) => `<th class="s${c === 'Player' || c === 'Team' ? ' l' : ''}" data-c="${c}">${l}${c === sortK ? (asc ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead><tbody>`
+    + rows.map(r => `<tr>${BC.map(([c, , f]) => `<td class="${c === 'Player' || c === 'Team' ? 'l' : ''}">${f(r[c])}</td>`).join('')}</tr>`).join('') + '</tbody>';
+  $('#board').querySelectorAll('th').forEach(th => th.onclick = () => { const c = th.dataset.c; asc = c === sortK ? !asc : ['Proy_rk', 'ADP_rk', 'Real_rk', 'Player', 'Team', 'ADP'].includes(c); sortK = c; drawBoard(); });
+}
+$('#q').addEventListener('input', drawBoard);
+
+function all() { drawMAE(); drawScatter(); drawDiv(); drawHeat(); }
+drawMetrics(); drawBoard(); all();
+let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(all, 120); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawHeat);
+</script>
+</body>
+</html>
