@@ -132,7 +132,7 @@ nav.top button[aria-pressed="true"]{background:var(--ink);color:var(--surface);b
     <div class="grid">
       <section class="card c6">
         <h2>Qué proyección usa cada posición</h2>
-        <p class="sub">Regla: el modelo con menor MAE en el backtest, con el mercado (ECR) como un candidato más.</p>
+        <p class="sub">Regla: el modelo con menor MAE en el backtest, con el mercado como un candidato más. «Mercado» = solo ECR.</p>
         <div class="tw"><table id="t-eleg"></table></div>
         <p class="note" id="eleg-note"></p>
       </section>
@@ -141,6 +141,12 @@ nav.top button[aria-pressed="true"]{background:var(--ink);color:var(--surface);b
         <p class="sub" id="rep-sub"></p>
         <div class="tw"><table id="t-rep"></table></div>
         <p class="note">Puntos de temporada proyectados del mejor jugador que queda fuera de los titulares de 12 equipos (incluido el FLEX). VOR = puntos proyectados − este nivel.</p>
+      </section>
+      <section class="card c12" id="c-merc">
+        <h2>Mercado: ADP real vs. ranking de expertos (ECR)</h2>
+        <p class="sub">Los mismos jugadores, temporadas en las que hay ADP para entrenar y evaluar. Cada mercado convierte su orden en PPG con una regresión entrenada en años anteriores.</p>
+        <div class="tw"><table id="t-merc"></table></div>
+        <p class="note">Con pocas temporadas y pocos jugadores (TE, K y DST sobre todo) las diferencias pequeñas no son concluyentes.</p>
       </section>
       <section class="card c12">
         <h2>Simulación de draft: ¿ayuda drafear por VOR?</h2>
@@ -342,7 +348,7 @@ function team() {
     + D.poss.map(p => { const x = D.pos[p], b = Object.fromEntries(x.backtest.map(r => [r.Modelo, r])), c = Object.fromEntries(x.comparacion.map(r => [r.Modelo, r]));
       return `<tr><td>${p}</td><td class="l">${N(x.best)}</td><td>${f2(b[x.best].MAE)}</td><td>${f2(b[mk].MAE)}</td><td>${f2(c[x.best]?.MAE)}</td><td>${f2(c[mk]?.MAE)}</td></tr>`; }).join('') + '</tbody>';
   const qb = D.pos.QB, qbb = Object.fromEntries(qb.backtest.map(r => [r.Modelo, r])), qbc = Object.fromEntries(qb.comparacion.map(r => [r.Modelo, r]));
-  $('#eleg-note').textContent = qbb.SoloADP ? `En QB, el ECR también le gana a tu ADP: MAE backtest ${f2(qbb.SoloECR.MAE)} vs ${f2(qbb.SoloADP.MAE)}; ${D.test}: ${f2(qbc.SoloECR?.MAE)} vs ${f2(qbc.SoloADP?.MAE)}.` : '';
+  $('#eleg-note').textContent = qbb.SoloADP ? `QB, solo ADP vs. solo ECR: MAE backtest ${f2(qbb.SoloADP.MAE)} vs ${f2(qbb.SoloECR.MAE)}; ${D.test}: ${f2(qbc.SoloADP?.MAE)} vs ${f2(qbc.SoloECR?.MAE)}.` : '';
   $('#rep-sub').textContent = `Temporada ${D.test}, 12 equipos: 1 QB, 2 RB, 2 WR, 1 TE, 1 FLEX, 1 K, 1 DST.`;
   $('#t-rep').innerHTML = `<thead><tr><th>Pos.</th><th>Reemplazo (proyección elegida)</th><th>Reemplazo (solo mercado)</th></tr></thead><tbody>`
     + D.reemplazo.map(r => `<tr><td>${r.pos}</td><td>${f1(r.repl_modelo)} pts</td><td>${f1(r.repl_mercado)} pts</td></tr>`).join('') + '</tbody>';
@@ -355,8 +361,13 @@ function team() {
   $('#t-sim').innerHTML = `<thead><tr><th>Estrategia (tú)</th>${ss.map(s => `<th>${s}${s === D.test ? '*' : ''}</th>`).join('')}<th>Prom. ${bts[0]}–${bts.at(-1)}</th><th>Lugar prom. ${bts[0]}–${bts.at(-1)}</th></tr></thead><tbody>`
     + est.map(e => { const bt = bts.map(s => g[e + '|' + s]); const m = bt.reduce((a, r) => a + r.dif, 0) / bt.length, l = bt.reduce((a, r) => a + r.lugar, 0) / bt.length;
       return `<tr><td>${e}</td>${ss.map(s => cell(g[e + '|' + s]?.dif)).join('')}<td><b>${sgn(m, x => x.toFixed(0))}</b></td><td>${l.toFixed(1)} de 12</td></tr>`; }).join('') + '</tbody>';
-  $('#sim-sub').textContent = `Puntos reales de tu mejor alineación en la temporada menos el promedio de los otros 11 equipos, promediando los 12 turnos del draft. Los otros 11 eligen por ECR general.`;
-  $('#sim-note').textContent = `* ${D.test} solo hasta la semana ${D.semana ?? '?'}. Draft de 15 rondas (9 titulares + 6 de banca, la banca es un supuesto). Todos llenan primero sus titulares; los otros dejan K y DST para las 2 últimas rondas. «Control» = drafear igual que los demás; sale 0 por construcción. Una sola simulación varía mucho (desviación estándar ≈ ${D.sim_sd ? D.sim_sd.toFixed(0) : '?'} pts) y solo hay 4 temporadas de backtest, así que diferencias de unas decenas de puntos no son concluyentes.`;
+  const riv = Object.entries(D.rivales || {}), byF = f => riv.filter(([, v]) => v === f).map(([k]) => k);
+  const rtxt = riv.length ? ` Los otros 11 eligen por ADP real general${byF('ADP').length ? ' (' + byF('ADP').join(', ') + ')' : ''}${byF('ECR').length ? ' y por ECR general donde no hay ADP (' + byF('ECR').join(', ') + ')' : ''}.` : ' Los otros 11 eligen por ECR general.';
+  $('#sim-sub').textContent = `Puntos reales de tu mejor alineación en la temporada menos el promedio de los otros 11 equipos, promediando los 12 turnos del draft.` + rtxt;
+  const M = D.mercado || []; $('#c-merc').hidden = !M.length;
+  $('#t-merc').innerHTML = `<thead><tr><th>Pos.</th><th>Temporadas</th><th>Proyección</th><th>Jugadores</th><th>MAE</th><th>Spearman</th><th>Acierto Top</th></tr></thead><tbody>`
+    + M.map(r => `<tr><td>${r.pos}</td><td>${r.temporadas}</td><td class="l">${N(r.Modelo)}</td><td>${r.N}</td><td>${f2(r.MAE)}</td><td>${f2(r.Spearman)}</td><td>${pct(r.Acierto_Top)}</td></tr>`).join('') + '</tbody>';
+  $('#sim-note').textContent = `* ${D.test} solo hasta la semana ${D.semana ?? '?'}. Draft de 15 rondas (9 titulares + 6 de banca, la banca es un supuesto). Todos llenan primero sus titulares; los otros dejan K y DST para las 2 últimas rondas. «Control» = drafear igual que los demás; sale 0 por construcción. «VOR mercado» usa proyecciones solo del ECR. Una sola simulación varía mucho (desviación estándar ≈ ${D.sim_sd ? D.sim_sd.toFixed(0) : '?'} pts) y solo hay 4 temporadas de backtest, así que diferencias de unas decenas de puntos no son concluyentes.`;
   drawTB();
 }
 function drawTB() {

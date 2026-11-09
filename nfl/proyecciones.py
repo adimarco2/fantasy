@@ -5,7 +5,8 @@ Uso:  python proyecciones.py  &&  python dashboard.py
 Mismo método que qb_2026.py: cada temporada se predice entrenando solo con temporadas anteriores e
 información disponible antes de la semana 1. La base "de mercado" de cada posición es el ranking de
 consenso de expertos de FantasyPros (ECR) del último corte antes de la semana 1 (archivo histórico de
-DynastyProcess). Para QB también se usa adp_hist.csv si existe.
+DynastyProcess). Además usa el ADP real si existe: adp_todas_2022_2025.csv (todas las posiciones) y
+adp_hist.csv (QB, para las temporadas que no estén en el otro archivo).
 """
 import os, re, time, urllib.request as u, numpy as np, pandas as pd
 from scipy.stats import spearmanr
@@ -26,15 +27,14 @@ TM = {'JAC': 'JAX', 'LAR': 'LA', 'OAK': 'LV', 'STL': 'LA', 'SD': 'LAC', 'WSH': '
 
 
 # Puntaje. QB/RB/WR/TE: fantasy_points_ppr de nflverse (4 por TD de pase, 1 por recepción).
-# K y DST: SUPUESTOS de puntaje común; cámbialos si tu liga usa otros.
+# K y DST: puntaje Yahoo, el mismo de K_yahoo y DST_yahoo en datos_posiciones.py (sin penalidad por fallar).
 def k_pts(x):
     f = lambda c: x[c].fillna(0)
-    return 3 * (f('fg_made_0_19') + f('fg_made_20_29') + f('fg_made_30_39')) + 4 * f('fg_made_40_49') + 5 * (f('fg_made_50_59') + f('fg_made_60_')) \
-        + f('pat_made') - f('fg_missed') - f('pat_missed')
+    return 3 * (f('fg_made_0_19') + f('fg_made_20_29') + f('fg_made_30_39')) + 4 * f('fg_made_40_49') + 5 * (f('fg_made_50_59') + f('fg_made_60_')) + f('pat_made')
 def dst_pts(x):
     f = lambda c: x[c].fillna(0)
     pa = np.select([x.PA == 0, x.PA <= 6, x.PA <= 13, x.PA <= 20, x.PA <= 27, x.PA <= 34], [10, 7, 4, 1, 0, -1], -4)
-    return f('def_sacks') + 2 * (f('def_interceptions') + f('fumble_recovery_opp') + f('def_safeties') + f('def_fg_blocks') + f('def_punt_blocks')) + 6 * x.TD + pa
+    return f('def_sacks') + 2 * (f('def_interceptions') + f('fumble_recovery_opp') + f('def_safeties') + f('def_fg_blocks') + f('def_punt_blocks') + f('def_pat_blocks')) + 6 * x.TD + pa
 
 
 B = 'https://github.com/nflverse/nflverse-data/releases/download/'
@@ -60,15 +60,19 @@ gl = pd.concat([g[['season', 'week', 'home_team', 'away_team', 'home_score', 'aw
                 g[['season', 'week', 'away_team', 'home_team', 'away_score', 'home_score']].set_axis(['season', 'week', 'team', 'opp', 'PF', 'PA'], axis=1)])
 KO = pd.to_datetime(g[g.week == 1].groupby('season').gameday.min())
 
-raw = pd.concat(get(f'sw{y}') for y in YRS).query("season_type=='REG' and position in ['QB','RB','WR','TE','K']").copy()
+full = pd.concat(get(f'sw{y}') for y in YRS).query("season_type=='REG'")
+full.loc[full.player_id == '00-0040718', 'position'] = 'WR'  # Travis Hunter: nflverse lo lista como CB
+OFF = ['QB', 'RB', 'FB', 'WR', 'TE', 'T', 'OT', 'G', 'OG', 'C', 'OL', 'K', 'P']  # fumbles recuperados y anotados por la defensa
+FRTD = full[~full.position.isin(OFF)].assign(team=lambda x: x.team.replace(TM)).groupby(['season', 'week', 'team']).fumble_recovery_tds.sum().rename('FR_TD').reset_index()
+raw = full.query("position in ['QB','RB','WR','TE','K']").copy()
 raw = raw.assign(pos=raw.position, team=raw.team.replace(TM), opp=raw.opponent_team.replace(TM), P=raw.player_display_name.map(norm), name=raw.player_display_name)
 raw['fg_att_40p'] = sum(raw[f'fg_{m}_{r}'].fillna(0) for m in ('made', 'missed') for r in ('40_49', '50_59', '60_'))
 raw['PTS'] = np.where(raw.pos == 'K', k_pts(raw), raw.fantasy_points_ppr)
 
 st = pd.concat(get(f'st{y}') for y in YRS).query("season_type=='REG'").copy()
 st['team'] = st.team.replace(TM)
-dst = gl.dropna(subset=['PA']).merge(st, 'left', ['season', 'week', 'team'])
-dst = dst.assign(TD=dst.def_tds.fillna(0) + dst.special_teams_tds.fillna(0), pos='DST', P=dst.team, name=dst.team)
+dst = gl.dropna(subset=['PA']).merge(st, 'left', ['season', 'week', 'team']).merge(FRTD, 'left', ['season', 'week', 'team'])
+dst = dst.assign(TD=dst.def_tds.fillna(0) + dst.special_teams_tds.fillna(0) + dst.FR_TD.fillna(0), pos='DST', P=dst.team, name=dst.team)
 dst['PTS'] = dst_pts(dst)
 GM = pd.concat([raw, dst], ignore_index=True)
 
@@ -111,8 +115,18 @@ E = pd.concat(cortes)
 E = E.assign(team=E.team.replace(TM), P=np.where(E.pos == 'DST', E.team.replace(TM), E.player.map(norm)))
 ovr = E[E.page == PAGE['ALL']].assign(pos=lambda x: x.pos.str.replace(r'\d', '', regex=True)).drop_duplicates(['season', 'pos', 'P'])[['season', 'pos', 'P', 'ecr']].rename(columns={'ecr': 'ECR_ovr'})
 FECHAS = {int(s): str(x.scrape_date.max().date()) for s, x in E.groupby('season')}
-ADP = pd.read_csv('adp_hist.csv').rename(columns={'Season': 'season'}).assign(P=lambda d: d.Player.map(norm)) if os.path.exists('adp_hist.csv') else None
-if ADP is not None: ADP['ADP_rk'] = ADP.groupby('season').ADP.rank()
+# ADP: archivo de todas las posiciones (con player_id de nflverse) + adp_hist.csv de QB para las demás temporadas
+pid = raw.sort_values('season').drop_duplicates('player_id', keep='last').set_index('player_id').P
+A = []
+if os.path.exists('adp_todas_2022_2025.csv'):
+    x = pd.read_csv('adp_todas_2022_2025.csv').rename(columns={'Season': 'season', 'Pos': 'pos', 'Rank_Pos': 'ADP_rk', 'Rank_ADP': 'ADP_ovr'})
+    x['P'] = np.where(x.pos == 'DST', x.player_id.replace(TM), x.player_id.map(pid))
+    A.append(x.assign(P=x.P.fillna(x.Player.map(norm)))[['season', 'pos', 'P', 'Player', 'ADP', 'ADP_rk', 'ADP_ovr']])
+if os.path.exists('adp_hist.csv'):
+    x = pd.read_csv('adp_hist.csv').rename(columns={'Season': 'season'}).assign(pos='QB', P=lambda d: d.Player.map(norm))
+    x = x[~x.season.isin(A[0].season.unique())] if A else x
+    A.append(x.assign(ADP_rk=x.groupby('season').ADP.rank(method='first'), ADP_ovr=np.nan)[['season', 'pos', 'P', 'Player', 'ADP', 'ADP_rk', 'ADP_ovr']])
+ADP = pd.concat(A, ignore_index=True).drop_duplicates(['season', 'pos', 'P']) if A else None
 
 dr = get('draft').assign(P=lambda d: d.pfr_player_name.map(norm)).sort_values('season').drop_duplicates(['P', 'position'], keep='last')
 dr = dr[['P', 'position', 'season', 'pick', 'age']].set_axis(['P', 'pos', 'DY', 'Pick', 'AgeD'], axis=1)
@@ -127,37 +141,42 @@ def base(pos):
     m = E[E.page == PAGE[pos]].drop_duplicates(['season', 'P'])[['season', 'P', 'player', 'team', 'ecr']].rename(columns={'player': 'Player', 'team': 'ET', 'ecr': 'ECR'})
     m['ECR_rk'] = m.groupby('season').ECR.rank(method='first')
     m = m.merge(ovr[ovr.pos == pos].drop(columns='pos'), 'left', ['season', 'P'])
-    if pos == 'QB' and ADP is not None:
-        m = m.merge(ADP[['season', 'P', 'Player', 'ADP', 'ADP_rk']].rename(columns={'Player': 'PA_'}), 'outer', ['season', 'P'])
+    if ADP is not None:
+        m = m.merge(ADP[ADP.pos == pos][['season', 'P', 'Player', 'ADP', 'ADP_rk', 'ADP_ovr']].rename(columns={'Player': 'PA_'}), 'outer', ['season', 'P'])
         m['Player'] = m.Player.fillna(m.PA_)
+    else: m = m.assign(ADP=np.nan, ADP_rk=np.nan, ADP_ovr=np.nan)
     d = a[['P', 'season', 'T0', 'G', 'PPG']].rename(columns={'G': 'Gt', 'PPG': 'y'}).merge(m, 'outer', ['P', 'season']).merge(tot, 'left', ['P', 'season']).sort_values(['season', 'P'])
     d = pd.merge_asof(d, a[['P', 'season', 'TL', *ST]].rename(columns={'season': 'prev'}).sort_values('prev'), by='P', left_on='season', right_on='prev', allow_exact_matches=False)
     d = d.merge(dr[dr.pos == pos].drop(columns='pos'), 'left', 'P')
     d = d.assign(Team=d.ET.fillna(d.T0), Pick=d.Pick.fillna(260), Age=d.AgeD + d.season - d.DY, Rookie=(d.season == d.DY).astype(int), Gap=d.season - d.prev,
-                 ECR_log=np.log(d.ECR_rk), Player=d.Player.fillna(d.name).fillna(d.P))
+                 ECR_log=np.log(d.ECR_rk), ADP_log=np.log(d.ADP_rk), Player=d.Player.fillna(d.name).fillna(d.P))
     d = d.merge(sos, 'left', ['season', 'Team']).merge(TP, 'left', ['season', 'Team']).assign(NewTeam=lambda x: (x.Team != x.TL).astype(int))
     extra = {'DST': ['Gap', 'SOS', 'TmPts'], 'K': ['Gap', 'SOS', 'TmPts', 'NewTeam']}.get(pos, ['Pick', 'Age', 'Rookie', 'Gap', 'SOS', 'TmPts', 'NewTeam'])
     d['univ'] = d.ECR_rk <= CAP[pos]
     d['eval'] = d.univ
-    if pos == 'QB' and ADP is not None:  # QB se evalúa sobre la lista de ADP, como en qb_2026.py
+    if pos == 'QB' and d.ADP_rk.notna().any():  # QB se evalúa sobre la lista de ADP, como en qb_2026.py
         d['univ'] = d.univ | d.ADP_rk.notna(); d['eval'] = d.ADP_rk.notna()
     return d, ST + extra
 
 # ---------- 4. Modelos y evaluación (igual que qb_2026.py) ----------
 rf = lambda: RF(400, min_samples_leaf=5, max_features=.33, n_jobs=-1, random_state=0)
 xg = lambda: XGB(n_estimators=250, learning_rate=.03, max_depth=2, subsample=.8, colsample_bytree=.6, min_child_weight=5, reg_lambda=10, random_state=0)
-MK = ['ECR_rk', 'ECR_log']
+MK, MA = ['ECR_rk', 'ECR_log'], ['ADP_rk', 'ADP_log']
 def spec(pos, S):
     s = {'SoloECR': (LR, MK)}
-    if pos == 'QB' and ADP is not None: s['SoloADP'] = (LR, ['ADP_rk'])
+    if pos == 'QB' and ADP is not None: s['SoloADP'] = (LR, MA)  # en QB hay ADP desde 2020; en el resto solo 2022-2025
     return {**s, 'Lineal': (LR, S), 'RF': (rf, S), 'XGB': (xg, S), 'Lineal+ECR': (LR, S + MK), 'RF+ECR': (rf, S + MK), 'XGB+ECR': (xg, S + MK)}
 def run(d, SP, y):
     tr, te = d[(d.season < y) & (d.season >= FIRST) & (d.Gt >= MIN_G)], d[(d.season == y) & d.univ].copy()
     te['Ingenuo'] = te.PPG.fillna(tr.y.mean())
     for n, (m, f) in SP.items():
-        mkt = [c for c in f if c in ('ECR_rk', 'ECR_log', 'ADP_rk')]
+        mkt = [c for c in f if c in (*MK, *MA)]
         t = tr.dropna(subset=mkt) if mkt else tr
         te[n] = mp(SI(), SS(), m()).fit(t[f], t.y).predict(te[f])
+    if 'SoloADP' not in SP:  # mercado ADP para comparar con el ECR (no entra a la elección del modelo)
+        t = tr.dropna(subset=MA)
+        te['SoloADP'] = mp(SS(), LR()).fit(t[MA], t.y).predict(te[MA].fillna(1)) if t.season.nunique() >= 1 and len(t) >= 20 else np.nan
+        te.loc[te.ADP_rk.isna(), 'SoloADP'] = np.nan
     # Juegos esperados: promedio histórico (temporadas < y) de juegos jugados según el tramo del ECR, escalado a 17
     h = d[(d.season < y) & (d.season >= 2020) & d.univ].assign(fr=lambda x: x.Gt.fillna(0) / np.where(x.season <= 2020, 16, 17))
     tier = lambda r: pd.cut(r, [0, 6, 12, 24, 36, 999], labels=False)
@@ -171,7 +190,7 @@ def ev(o, n, top):
             'Spearman': np.mean([spearmanr(x.y, x[n])[0] for _, x in G]), 'Acierto_Top': G.apply(hit, include_groups=False).mean(),
             'PPG_real_Top': G.apply(lambda x: x.nlargest(top, n).y.mean(), include_groups=False).mean()}
 
-TABLAS, RES = {}, []
+TABLAS, RES, MERC = {}, [], []
 for pos in POSS:
     d, S = base(pos); SP = spec(pos, S); N = ['Ingenuo', *SP]; top = LIGA['equipos'] * LIGA[pos]
     runs = {y: run(d, SP, y) for y in BT + [TEST]}
@@ -182,6 +201,9 @@ for pos in POSS:
     od = f'outputs/{pos}'; os.makedirs(od, exist_ok=True)
     rb.round(3).to_csv(f'{od}/backtest.csv', index=False)
     btv[['season', 'Player', 'y', 'Gt', *N]].to_csv(f'{od}/backtest_detalle.csv', index=False)
+    # Mercado: ADP vs ECR sobre los mismos jugadores (temporadas del backtest con ADP para entrenar y evaluar)
+    c = bt[(bt.Gt >= MIN_G) & bt.univ & bt.ADP_rk.notna() & bt.ECR_rk.notna() & bt.SoloADP.notna()]
+    if len(c): MERC.extend({'pos': pos, 'temporadas': f'{c.season.min()}-{c.season.max()}', **ev(c, n, top)} for n in dict.fromkeys(['SoloADP', 'SoloECR', best]))
     if len(rt): rt.round(3).to_csv(f'{od}/comparacion_{TEST}.csv', index=False)
     p = p.assign(Proy=p[best], Proy_rk=p[best].rank(ascending=False, method='first').astype(int))
     p['Valor_vs_ECR'] = p.ECR_rk.rank(method='first') - p.Proy_rk
@@ -192,8 +214,11 @@ for pos in POSS:
     if len(rt): print(f'--- {TEST} (>= {MIN_G_TEST} juegos)\n', rt.round(3).to_string(index=False))
     RES.append({'pos': pos, 'elegido': best})
     for y, t in runs.items():
-        TABLAS.setdefault(y, []).append(t.assign(pos=pos, Proy=t[best], Merc=t.SoloECR)[['pos', 'P', 'Player', 'Team', 'ECR_rk', 'ECR_ovr', 'Proy', 'Merc', 'EG', 'y', 'Gt', 'Ptot']])
+        TABLAS.setdefault(y, []).append(t.assign(pos=pos, Proy=t[best], Merc=t.SoloECR)[['pos', 'P', 'Player', 'Team', 'ECR_rk', 'ECR_ovr', 'ADP_ovr', 'Proy', 'Merc', 'EG', 'y', 'Gt', 'Ptot']])
 pd.DataFrame(RES).to_csv('outputs/elegidos.csv', index=False)
+if MERC:
+    MERC = pd.DataFrame(MERC).round(3); MERC.to_csv('outputs/mercado_adp_vs_ecr.csv', index=False)
+    print('\nMERCADO: ADP vs ECR (mismos jugadores)\n', MERC[['pos', 'temporadas', 'Modelo', 'N', 'MAE', 'Spearman', 'Acierto_Top']].to_string(index=False))
 
 # ---------- 5. Valor sobre reemplazo (VOR) ----------
 def vor(b, col):
@@ -214,8 +239,8 @@ tb[['Rank_VOR', 'pos', 'Player', 'Team', 'ECR_ovr', 'ECR_rk', 'Proy', 'EG', 'Pts
 pd.DataFrame(REPL).round(2).to_csv('outputs/reemplazo.csv', index=False)
 
 # ---------- 6. Simulación de draft snake ----------
-# Los otros 11 equipos eligen por ECR general (lo más parecido al ADP que hay para todas las posiciones).
-# Todos llenan primero sus titulares. Tú eliges según la estrategia; con 'ECR (control)' haces lo mismo que los
+# Los otros 11 equipos eligen por ADP general cuando existe (2022-2025) y por ECR general si no (2026).
+# Todos llenan primero sus titulares. Tú eliges según la estrategia; con 'Mercado (control)' haces lo mismo que los
 # otros, así que su diferencia debe salir 0 (sirve para verificar la simulación). Se mide con los puntos reales de la temporada de tu mejor alineación.
 REQ = {p: LIGA[p] for p in POSS}
 def permitidas(c, quedan):
@@ -238,7 +263,7 @@ def alineacion(rows):
 def draft(b, mi, score_mio, kdst_final=False):
     T, R = LIGA['equipos'], sum(REQ.values()) + LIGA['FLEX'] + LIGA['banca']
     pos, real = b.pos.to_numpy(), b.Real.to_numpy()
-    otros = -b.ECR_ovr.fillna(900 + b.ECR_rk.fillna(99)).to_numpy(); mio = score_mio
+    otros = merc_key(b); mio = score_mio
     libre = np.ones(len(b), bool); ros = [[] for _ in range(T)]; cnt = [dict.fromkeys(POSS, 0) for _ in range(T)]
     for r in range(R):
         for t in (range(T) if r % 2 == 0 else range(T - 1, -1, -1)):
@@ -253,18 +278,22 @@ def draft(b, mi, score_mio, kdst_final=False):
             i = int(np.flatnonzero(m)[np.argmax(sc[m])])
             libre[i] = False; ros[t].append((pos[i], real[i])); cnt[t][pos[i]] += 1
     return [alineacion(x) for x in ros]
-EST = {'ECR general (control)': (None, True), 'VOR modelo': ('VOR', False), 'VOR mercado': ('VOR_M', False),
+def merc_key(b):  # orden de los rivales: ADP general si la temporada lo tiene; los que no tienen ADP van después, por ECR
+    e = b.ECR_ovr.fillna(400 + b.ECR_rk.fillna(99))
+    return -(b.ADP_ovr.fillna(1000 + e) if b.ADP_ovr.notna().sum() > 100 else e).to_numpy()
+FUENTE = {y: ('ADP' if b.ADP_ovr.notna().sum() > 100 else 'ECR') for y, b in TAB.items()}
+EST = {'Mercado general (control)': (None, True), 'VOR modelo': ('VOR', False), 'VOR mercado': ('VOR_M', False),
        'VOR modelo, K/DST al final': ('VOR', True), 'VOR mercado, K/DST al final': ('VOR_M', True)}
 sim = []
 for y, b in TAB.items():
     b = b.reset_index(drop=True)
     for nom, (col, kd) in EST.items():
-        sc = b[col].fillna(-999).to_numpy() if col else -b.ECR_ovr.fillna(900 + b.ECR_rk.fillna(99)).to_numpy()
+        sc = b[col].fillna(-999).to_numpy() if col else merc_key(b)
         for mi in range(LIGA['equipos']):
             pts = draft(b, mi, sc, kd); otros = [x for j, x in enumerate(pts) if j != mi]
-            sim.append({'season': y, 'estrategia': nom, 'turno': mi + 1, 'mis_pts': pts[mi], 'prom_otros': np.mean(otros),
+            sim.append({'season': y, 'rivales': FUENTE[y], 'estrategia': nom, 'turno': mi + 1, 'mis_pts': pts[mi], 'prom_otros': np.mean(otros),
                         'dif': pts[mi] - np.mean(otros), 'lugar': 1 + sum(x > pts[mi] for x in otros)})
 sim = pd.DataFrame(sim).round(2); sim.to_csv('outputs/simulacion_draft.csv', index=False)
 print('\nSIMULACIÓN DE DRAFT: puntos reales de tu alineación menos el promedio de los otros 11 (promedio de los 12 turnos)')
 print(sim.pivot_table(index='estrategia', columns='season', values='dif').round(1).to_string())
-print('\nCortes del ECR usados:', FECHAS)
+print('\nLos rivales eligen por:', FUENTE, '\nCortes del ECR usados:', FECHAS)
