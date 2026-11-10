@@ -118,6 +118,12 @@ nav.top button[aria-pressed="true"]{background:var(--ink);color:var(--surface);b
         <div class="legend"><span><i class="sw sq" style="background:var(--pos)"></i>Modelo lo pone más arriba que el ECR</span><span><i class="sw sq" style="background:var(--neg)"></i>Más abajo</span></div>
         <div id="ch-dv"></div>
       </section>
+      <section class="card c12" id="c-cadp">
+        <h2>Con el ADP como variable</h2>
+        <p class="sub" id="cadp-sub"></p>
+        <div class="tw"><table id="cadp"></table></div>
+        <p class="note">«+ ADP» = el mismo modelo con el rank de ADP (y su logaritmo) como variable. Menor MAE es mejor; mayor Spearman y Acierto Top es mejor.</p>
+      </section>
       <section class="card c12">
         <h2>Ranking de la posición</h2>
         <div class="controls"><input id="q" type="search" placeholder="Buscar jugador o equipo" aria-label="Buscar"></div>
@@ -294,6 +300,14 @@ function drawMetrics() {
     + rows.map(r => `<tr class="${r.Modelo === P.best ? 'best' : ''}"><td>${N(r.Modelo)}${r.Modelo === P.best ? ' · elegido' : ''}</td>${COLS.map(([c, f]) => `<td>${f(r[c])}</td>`).join('')}</tr>`).join('') + '</tbody>';
   $('#mt-note').textContent = `MAE y RMSE: error en PPG (menor es mejor). Spearman: qué tan bien ordena (mayor es mejor). Acierto Top ${P.top}: de los ${P.top} que el modelo pone arriba, cuántos terminan en el Top ${P.top} real.`;
 }
+function drawCADP() {
+  const R = P.con_adp || []; $('#c-cadp').hidden = !R.length; if (!R.length) return;
+  const lo = Math.min(...R.filter(r => r.Modelo !== 'Ingenuo').map(r => r.MAE));
+  $('#cadp-sub').textContent = `Todos los modelos sobre los mismos ${R[0].N} jugadores con ADP, temporadas ${R[0].temporadas} (las que tienen ADP previo para entrenar). `
+    + (P.modelos.includes('RF+ADP') ? 'En QB hay ADP desde 2020, así que estos modelos también compiten en la tabla principal.' : `Sin ADP ${D.test} de esta posición no pueden proyectar ${D.test}; por eso no compiten en la tabla principal.`);
+  $('#cadp').innerHTML = `<thead><tr><th>Modelo</th><th>MAE</th><th>RMSE</th><th>Spearman</th><th>Acierto Top ${P.top}</th><th>PPG real Top ${P.top}</th></tr></thead><tbody>`
+    + R.map(r => `<tr class="${r.MAE === lo ? 'best' : ''}"><td>${N(r.Modelo)}${r.MAE === lo ? ' · menor MAE' : ''}</td><td>${f2(r.MAE)}</td><td>${f2(r.RMSE)}</td><td>${f2(r.Spearman)}</td><td>${pct(r.Acierto_Top)}</td><td>${f2(r.PPG_real_Top)}</td></tr>`).join('') + '</tbody>';
+}
 function drawHeat() {
   const H = P.heat; if (!H.length) { $('#heat').innerHTML = ''; return; }
   const v = H.flatMap(h => P.modelos.map(m => h[m])), lo = Math.min(...v), hi = Math.max(...v), st = ['--q1', '--q2', '--q3', '--q4', '--q5', '--q6'], dk = isDark();
@@ -387,7 +401,7 @@ function render() {
   $('#nav').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === view));
   const isT = view === 'Equipo'; $('#v-pos').hidden = isT; $('#v-team').hidden = !isT;
   if (isT) { team(); return; }
-  setPos(view); kpis(); drawMetrics(); drawBoard(); drawMAE(); drawScatter(); drawDiv(); drawHeat();
+  setPos(view); kpis(); drawMetrics(); drawCADP(); drawBoard(); drawMAE(); drawScatter(); drawDiv(); drawHeat();
 }
 render();
 let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (view !== 'Equipo') { drawMAE(); drawScatter(); drawDiv(); } }, 120); });

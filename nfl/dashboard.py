@@ -11,10 +11,12 @@ TEST = int(re.search(r'TEST, BT.*?= (\d{4})', open('proyecciones.py', encoding='
 POSS, MIN_G_TEST = ['QB', 'RB', 'WR', 'TE', 'K', 'DST'], 3
 TOP = {'QB': 12, 'RB': 24, 'WR': 24, 'TE': 12, 'K': 12, 'DST': 12}
 NOMBRES = {'Ingenuo': 'PPG año anterior', 'SoloECR': 'Solo ECR (mercado)', 'SoloADP': 'Solo ADP', 'Lineal': 'Regresión lineal', 'RF': 'Random Forest',
-           'XGB': 'XGBoost', 'Lineal+ECR': 'Lineal + ECR', 'RF+ECR': 'Random Forest + ECR', 'XGB+ECR': 'XGBoost + ECR'}
+           'XGB': 'XGBoost', 'Lineal+ECR': 'Lineal + ECR', 'RF+ECR': 'Random Forest + ECR', 'XGB+ECR': 'XGBoost + ECR',
+           'Lineal+ADP': 'Lineal + ADP', 'RF+ADP': 'Random Forest + ADP', 'XGB+ADP': 'XGBoost + ADP'}
 recs = lambda df: json.loads(df.to_json(orient='records'))
 leer = lambda f: pd.read_csv(f) if os.path.exists(f) else pd.DataFrame()
 
+CA = leer(f'{O}/con_adp.csv')
 pos_data = {}
 for p in POSS:
     d = f'{O}/{p}'
@@ -25,7 +27,7 @@ for p in POSS:
     ev = pd.concat([det, pr[pr.Real_rk.notna()].rename(columns={'PPG_real': 'y'}).assign(season=TEST)], ignore_index=True)
     heat = [{'season': int(s), 'n': len(x), **{m: float((x[m] - x.y).abs().mean()) for m in M}} for s, x in ev.groupby('season')]
     pos_data[p] = {'best': best, 'modelos': M, 'top': TOP[p], 'n_bt': int(bt.N.iloc[0]), 'bt_seasons': sorted(int(s) for s in det.season.unique()),
-                   'backtest': recs(bt), 'comparacion': recs(cmp_), 'pred': recs(pr), 'heat': heat}
+                   'backtest': recs(bt), 'comparacion': recs(cmp_), 'con_adp': recs(CA[CA.pos == p]) if len(CA) else [], 'pred': recs(pr), 'heat': heat}
 
 semana = None
 if os.path.exists(f'nflverse/sw{TEST}.csv'):
@@ -36,7 +38,7 @@ data = {'test': TEST, 'minG': MIN_G_TEST, 'semana': semana, 'nombres': NOMBRES, 
         'tablero': recs(leer(f'{O}/tablero_{TEST}.csv')), 'reemplazo': recs(leer(f'{O}/reemplazo.csv').query('season == @TEST')),
         'sim': recs(sim.groupby(['estrategia', 'season'], as_index=False).agg(dif=('dif', 'mean'), lugar=('lugar', 'mean'))) if len(sim) else [],
         'rivales': {int(k): v for k, v in sim.groupby('season').rivales.first().items()} if 'rivales' in sim else {},
-        'mercado': recs(leer(f'{O}/mercado_adp_vs_ecr.csv')),
+        'mercado': recs(CA[CA.Modelo.isin(['SoloADP', 'SoloECR'])]) if len(CA) else [],
         'sim_sd': float(sim[~sim.estrategia.str.contains('control')].dif.std()) if len(sim) else None}
 html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard_template.html'), encoding='utf-8').read()
 os.makedirs(O, exist_ok=True)

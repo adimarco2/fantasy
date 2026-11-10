@@ -164,19 +164,22 @@ xg = lambda: XGB(n_estimators=250, learning_rate=.03, max_depth=2, subsample=.8,
 MK, MA = ['ECR_rk', 'ECR_log'], ['ADP_rk', 'ADP_log']
 def spec(pos, S):
     s = {'SoloECR': (LR, MK)}
-    if pos == 'QB' and ADP is not None: s['SoloADP'] = (LR, MA)  # en QB hay ADP desde 2020; en el resto solo 2022-2025
-    return {**s, 'Lineal': (LR, S), 'RF': (rf, S), 'XGB': (xg, S), 'Lineal+ECR': (LR, S + MK), 'RF+ECR': (rf, S + MK), 'XGB+ECR': (xg, S + MK)}
-def run(d, SP, y):
+    s = {**s, 'Lineal': (LR, S), 'RF': (rf, S), 'XGB': (xg, S), 'Lineal+ECR': (LR, S + MK), 'RF+ECR': (rf, S + MK), 'XGB+ECR': (xg, S + MK)}
+    return (s | adp_spec(S), {}) if pos == 'QB' and ADP is not None else (s, adp_spec(S))
+# Modelos con el ADP como variable. En QB hay ADP desde 2020 y entran a la elección del modelo. En las demás posiciones
+# solo hay ADP 2022-2025: se evalúan aparte (2023-2025, jugadores con ADP) y no pueden proyectar 2026 hasta tener su ADP.
+adp_spec = lambda S: {'SoloADP': (LR, MA), 'Lineal+ADP': (LR, S + MA), 'RF+ADP': (rf, S + MA), 'XGB+ADP': (xg, S + MA)}
+def run(d, SP, y, EX={}):
     tr, te = d[(d.season < y) & (d.season >= FIRST) & (d.Gt >= MIN_G)], d[(d.season == y) & d.univ].copy()
     te['Ingenuo'] = te.PPG.fillna(tr.y.mean())
     for n, (m, f) in SP.items():
         mkt = [c for c in f if c in (*MK, *MA)]
         t = tr.dropna(subset=mkt) if mkt else tr
         te[n] = mp(SI(), SS(), m()).fit(t[f], t.y).predict(te[f])
-    if 'SoloADP' not in SP:  # mercado ADP para comparar con el ECR (no entra a la elección del modelo)
-        t = tr.dropna(subset=MA)
-        te['SoloADP'] = mp(SS(), LR()).fit(t[MA], t.y).predict(te[MA].fillna(1)) if t.season.nunique() >= 1 and len(t) >= 20 else np.nan
-        te.loc[te.ADP_rk.isna(), 'SoloADP'] = np.nan
+    t = tr.dropna(subset=MA)
+    for n, (m, f) in EX.items():  # solo jugadores con ADP; sin temporadas previas con ADP no hay modelo
+        te[n] = mp(SI(), SS(), m()).fit(t[f], t.y).predict(te[f]) if len(t) >= 20 else np.nan
+        te.loc[te.ADP_rk.isna(), n] = np.nan
     # Juegos esperados: promedio histórico (temporadas < y) de juegos jugados según el tramo del ECR, escalado a 17
     h = d[(d.season < y) & (d.season >= 2020) & d.univ].assign(fr=lambda x: x.Gt.fillna(0) / np.where(x.season <= 2020, 16, 17))
     tier = lambda r: pd.cut(r, [0, 6, 12, 24, 36, 999], labels=False)
@@ -192,8 +195,8 @@ def ev(o, n, top):
 
 TABLAS, RES, MERC = {}, [], []
 for pos in POSS:
-    d, S = base(pos); SP = spec(pos, S); N = ['Ingenuo', *SP]; top = LIGA['equipos'] * LIGA[pos]
-    runs = {y: run(d, SP, y) for y in BT + [TEST]}
+    d, S = base(pos); SP, EX = spec(pos, S); N = ['Ingenuo', *SP]; top = LIGA['equipos'] * LIGA[pos]
+    runs = {y: run(d, SP, y, EX) for y in BT + [TEST]}
     bt = pd.concat(runs[y] for y in BT); btv = bt[(bt.Gt >= MIN_G) & bt['eval']]
     rb = pd.DataFrame(ev(btv, n, top) for n in N); best = rb[rb.Modelo != 'Ingenuo'].sort_values('MAE').Modelo.iloc[0]
     p = runs[TEST]; v = p[(p.Gt >= MIN_G_TEST) & p['eval']]
@@ -201,9 +204,11 @@ for pos in POSS:
     od = f'outputs/{pos}'; os.makedirs(od, exist_ok=True)
     rb.round(3).to_csv(f'{od}/backtest.csv', index=False)
     btv[['season', 'Player', 'y', 'Gt', *N]].to_csv(f'{od}/backtest_detalle.csv', index=False)
-    # Mercado: ADP vs ECR sobre los mismos jugadores (temporadas del backtest con ADP para entrenar y evaluar)
-    c = bt[(bt.Gt >= MIN_G) & bt.univ & bt.ADP_rk.notna() & bt.ECR_rk.notna() & bt.SoloADP.notna()]
-    if len(c): MERC.extend({'pos': pos, 'temporadas': f'{c.season.min()}-{c.season.max()}', **ev(c, n, top)} for n in dict.fromkeys(['SoloADP', 'SoloECR', best]))
+    # Todos los modelos, con y sin ADP, sobre los mismos jugadores: los que tienen ADP, en temporadas con ADP previo para entrenar
+    NA = [*N, *EX]; c = bt[(bt.Gt >= MIN_G) & bt.univ & bt.ADP_rk.notna() & bt.ECR_rk.notna()].dropna(subset=list(adp_spec(S)))
+    if len(c):
+        ca = pd.DataFrame(ev(c, n, top) for n in NA).assign(pos=pos, temporadas=f'{c.season.min()}-{c.season.max()}'); MERC.append(ca)
+        print(f'--- {pos} con ADP como variable: {ca.temporadas[0]}, mismos {len(c)} jugadores\n', ca.drop(columns=['pos', 'temporadas']).round(3).to_string(index=False))
     if len(rt): rt.round(3).to_csv(f'{od}/comparacion_{TEST}.csv', index=False)
     p = p.assign(Proy=p[best], Proy_rk=p[best].rank(ascending=False, method='first').astype(int))
     p['Valor_vs_ECR'] = p.ECR_rk.rank(method='first') - p.Proy_rk
@@ -216,9 +221,7 @@ for pos in POSS:
     for y, t in runs.items():
         TABLAS.setdefault(y, []).append(t.assign(pos=pos, Proy=t[best], Merc=t.SoloECR)[['pos', 'P', 'Player', 'Team', 'ECR_rk', 'ECR_ovr', 'ADP_ovr', 'Proy', 'Merc', 'EG', 'y', 'Gt', 'Ptot']])
 pd.DataFrame(RES).to_csv('outputs/elegidos.csv', index=False)
-if MERC:
-    MERC = pd.DataFrame(MERC).round(3); MERC.to_csv('outputs/mercado_adp_vs_ecr.csv', index=False)
-    print('\nMERCADO: ADP vs ECR (mismos jugadores)\n', MERC[['pos', 'temporadas', 'Modelo', 'N', 'MAE', 'Spearman', 'Acierto_Top']].to_string(index=False))
+if MERC: pd.concat(MERC).round(3).to_csv('outputs/con_adp.csv', index=False)
 
 # ---------- 5. Valor sobre reemplazo (VOR) ----------
 def vor(b, col):

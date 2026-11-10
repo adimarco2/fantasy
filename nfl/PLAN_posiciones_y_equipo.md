@@ -14,6 +14,7 @@
 | 3. TE | Hecho |
 | 4. K y DST (puntos calculados: nflverse trae 0 para kickers) | Hecho, puntaje Yahoo |
 | 4b. ADP real de todas las posiciones 2022–2025 | Hecho: comparación ADP vs. ECR y rivales por ADP en la simulación |
+| 4c. ADP como variable de los modelos (Lineal/RF/XGBoost + ADP) | Hecho: en QB compiten en la tabla principal; en las demás posiciones se evalúan aparte (`outputs/con_adp.csv`) porque falta el ADP 2026 |
 | 5. VOR y tablero general | Hecho |
 | 6. Simulación de draft 2022–2025 (+ 2026 parcial) | Hecho |
 | 7. Revisar con la temporada 2026 completa | Después de la semana 18 |
@@ -41,7 +42,8 @@ Se cambian en `k_pts`, `dst_pts` y `LIGA` dentro de `proyecciones.py`.
 
 ## Método (igual que QB)
 - Objetivo: PPG en los partidos jugados. Cada temporada se predice entrenando solo con temporadas anteriores.
-- Candidatos por posición: PPG del año anterior, solo ECR, lineal, Random Forest, XGBoost y esas tres + ECR.
+- Candidatos por posición: PPG del año anterior, solo ECR, lineal, Random Forest, XGBoost, esas tres + ECR, solo ADP y esas tres + ADP.
+  Los modelos con ADP solo compiten donde hay ADP de la temporada a proyectar (hoy: QB).
 - Se usa el de menor MAE en el backtest 2022–2025.
 - Puntos de temporada = PPG proyectado × juegos esperados (promedio histórico según el tramo del ranking).
 - VOR = puntos − puntos del mejor jugador que queda fuera de los titulares de 12 equipos (FLEX incluido).
